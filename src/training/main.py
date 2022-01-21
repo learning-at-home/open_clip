@@ -47,7 +47,7 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
                 val = getattr(args, name)
                 logging.info(f"  {name}: {val}")
                 f.write(f"{name}: {val}\n")
-            
+
     if args.distributed:
         dist.init_process_group(
             backend=args.dist_backend,
@@ -55,7 +55,7 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
             world_size=args.world_size,
             rank=args.rank,
         )
-    
+
     if args.dp:
         args.batch_size *= args.world_size
 
@@ -76,6 +76,11 @@ def main_worker(gpu, ngpus_per_node, log_queue, args):
         with open(model_config_file, 'r') as f:
             model_info = json.load(f)
         model = CLIP(**model_info)
+
+        if is_master(args):
+            logging.info(f"Trainable parameters: "
+                         f"{sum(param.numel() for param in model.parameters() if param.requires_grad)}")
+
         convert_weights(model)
         preprocess_train = _transform(model.visual.input_resolution, is_train=True)
         preprocess_val = _transform(model.visual.input_resolution, is_train=False)
@@ -287,7 +292,7 @@ def main():
     for dirname in [args.tensorboard_path, args.checkpoint_path]:
         if dirname:
             os.makedirs(dirname, exist_ok=True)
-    
+
 
     # Set multiprocessing type to spawn.
     # This is important for logging to work with multiprocessing.

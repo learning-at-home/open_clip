@@ -20,6 +20,17 @@ import logging
 def is_master(args):
     return (not args.distributed) or args.gpu == 0
 
+
+def max_neg_value(t):
+    return -torch.finfo(t.dtype).max
+
+
+def filter_logits(logits, n_neighbors=32):
+    mask = torch.eye(len(logits), dtype=bool, device=logits.device)
+    mask |= (logits > logits.kthvalue(logits.shape[1] - n_neighbors, dim=1, keepdim=True).values)
+    return logits.masked_fill(~mask, max_neg_value(logits))
+
+
 def get_loss(model, images, texts, loss_img, loss_txt, args):
     image_features, text_features, logit_scale = model(images, texts)
     logit_scale = logit_scale.mean()
@@ -56,6 +67,9 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
         logits_per_image = logit_scale * image_features @ text_features.t()
         logits_per_text = logit_scale * text_features @ image_features.t()
 
+    logits_per_image = filter_logits(logits_per_image)
+    logits_per_text = filter_logits(logits_per_text)
+
     ground_truth = torch.arange(len(logits_per_image)).long()
     if args.gpu is not None:
         ground_truth = ground_truth.cuda(args.gpu, non_blocking=True)
@@ -69,7 +83,7 @@ def get_loss(model, images, texts, loss_img, loss_txt, args):
 
 def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None):
     os.environ["WDS_EPOCH"] = str(epoch)
-    
+
     model.train()
 
     dataloader, sampler = data['train'].dataloader,  data['train'].sampler
@@ -151,7 +165,7 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, tb_writer=None
 def evaluate(model, data, epoch, args, tb_writer=None, steps=None):
     if not is_master(args):
         return
-    
+
     model.eval()
 
     zero_shot_metrics = zero_shot_eval(model, data, epoch, args)
